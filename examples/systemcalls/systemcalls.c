@@ -1,4 +1,8 @@
 #include "systemcalls.h"
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <fcntl.h>
 
 /**
  * @param cmd the command to execute with system()
@@ -10,12 +14,11 @@
 bool do_system(const char *cmd)
 {
 
-/*
- * TODO  add your code here
- *  Call the system() function with the command set in the cmd
- *   and return a boolean true if the system() call completed with success
- *   or false() if it returned a failure
-*/
+	int sysrtn = system(cmd); //system() function will either return the exit status of the ran command, normally 0
+
+	if (sysrtn != EXIT_SUCCESS) { //If the system() function returns anything but 0, return false indicating error
+		return false;
+	}
 
     return true;
 }
@@ -45,19 +48,36 @@ bool do_exec(int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
+	
+	pid_t pid = fork();
+	int waitstat;
 
-/*
- * TODO:
- *   Execute a system command by calling fork, execv(),
- *   and wait instead of system (see LSP page 161).
- *   Use the command[0] as the full path to the command to execute
- *   (first argument to execv), and use the remaining arguments
- *   as second argument to the execv() command.
- *
-*/
+	if (pid == -1){ //Have to explicitly check for error code -1
+		perror("ERROR with fork()");
+		return false;
+	}
+
+	if (!pid){ //We can assume here that if pid is anything but zero it should be a PID since -1 was checked and errored
+		int execrt = execv(command[0], command);
+		
+		if (execrt == -1){ //Have to explicitly check for error code -1
+			perror("ERROR with execv()");
+			exit(EXIT_FAILURE); //Using exit() to exit fully as return would only go up 1 if statement
+		}
+	} 
+	
+	pid = wait(&waitstat); //We can assume that since no other child process was created, wait() will work
+	
+	if(pid == -1){ //Check if wait() exits abnormally
+		perror("ERROR with wait()");
+		return false;
+	}
+	
+	if(WEXITSTATUS(waitstat) != EXIT_SUCCESS){ // Check to see if the program ran in the child function exited abnormally
+		perror("EXIT ERROR from child function");
+		return false;
+	}
+
 
     va_end(args);
 
@@ -80,18 +100,39 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
+	pid_t pid = fork();
+	int waitstat;
 
-/*
- * TODO
- *   Call execv, but first using https://stackoverflow.com/a/13784315/1446624 as a refernce,
- *   redirect standard out to a file specified by outputfile.
- *   The rest of the behaviour is same as do_exec()
- *
-*/
+	fflush(stdout); //Prevent weird printf case as noted by assignment troubleshoot
+ 	if (pid == -1){ //Have to explicitly check for error code -1
+ 		perror("ERROR with fork()");
+ 		return false;
+ 	}
+ 	if (!pid){ //We can assume here that if pid is anything but zero it should be a PID since -1 was checked and errored
+		int file = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+		
+		if(file == -1){ //Check is int file returns a -1 for error
+			perror("ERROR with file open()");
+			exit(1);
+		}
+
+		if(dup2(file, 1) == -1){ //Check to see if the duplication program exited successfully
+			perror("ERROR with duplication");
+			exit(1);
+		}
+		int execrt = execv(command[0], command);
+ 		if (execrt == -1){ //Have to explicitly check for error code -1
+			perror("ERROR with execv()");
+ 			exit(1); //Using exit() to exit fully as return would only go up 1 if statement
+ 		}
+ 	}
+
+ 	pid = wait(&waitstat); //We can assume that since no other child process was created, wait() will work
+ 	if(pid == -1){ //Check if wait() exits abnormally
+ 		perror("ERROR with wait()");
+		return false;
+	}
 
     va_end(args);
 
