@@ -1,7 +1,7 @@
 #Simple Makefile for the writer.c function
 
 all :
-	./bin/aarch64-none-linux-gnu-gcc writer.c -o writer
+	./aarch/bin/aarch64-none-linux-gnu-gcc writer.c -o writer
 
 CROSS_COMPILE :
 	aarch64-none-linux-gnu-gcc writer.c -o writer
