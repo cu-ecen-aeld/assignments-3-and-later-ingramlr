@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 writefile="$1"
 writestr="$2" #Declare a couple variables for ease of reading/use later
