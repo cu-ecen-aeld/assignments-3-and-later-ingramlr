@@ -1,7 +1,7 @@
 #Simple Makefile for the writer.c function
 
 all :
-	gcc writer.c -o writer
+	$(CC) $(CFLAGS) $(INCLUDES) $(OBJS) -o $(TARGET) $(LDFLAGS)
 
 CROSS_COMPILE :
 	aarch64-none-linux-gnu-gcc writer.c -o writer
