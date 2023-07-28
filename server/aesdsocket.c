@@ -263,7 +263,7 @@ void signal_handler(int sig, siginfo_t *si, void *uc) {
 }
 
 void *fileWrite(char* textbuffer){
-    if ((write(file_fd, textbuffer, strnlen(textbuffer, 1024))) == -1){
+    if ((write(file_fd, textbuffer, strlen(textbuffer))) == -1){
         syslog(LOG_ERR, "ERROR with write");
     }
     return(0);
