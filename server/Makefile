@@ -1,20 +1,18 @@
 #Simple make file for aesdsocket
-CC = gcc
-CFLAGS= -Wall -Werror
-LDFLAGS=
-CROSS_COMPILE=
-
+#CC = gcc
+CFLAGS= -g -Wall -Werror
+LDFLAGS= -pthread -lrt
+#CROSS_COMPILE=aarch64-none-linux-gnu
+CROSS_COMPILE?= aarch64-none-linux-gnu
+CC?= $(CROSS_COMPILE)gcc
 EXECUTABLE=aesdsocket
 SOURCES=aesdsocket.c
 OBJECTS=$(SOURCES:.c=.o)
 
-all: $(EXECUTABLE) $(OBJECTS)
+all: $(EXECUTABLE)
 
 $(EXECUTABLE): $(OBJECTS)
-	$(CROSS_COMPILE)$(CC) $(LDFLAGS) $(OBJECTS) -o $@
-
-$(OBJECTS): $(SOURCES)
-	$(CROSS_COMPILE)$(CC) $(CFLAGS) -c $<
+	$(CC) $(INCLUDES) $(OBJECTS) -o $(EXECUTABLE) $(LDFLAGS) $(CFLAGS)
 
 
 clean:
