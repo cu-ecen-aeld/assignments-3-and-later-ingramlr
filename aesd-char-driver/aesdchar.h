@@ -4,6 +4,9 @@
  *  Created on: Oct 23, 2019
  *      Author: Dan Walkes
  */
+#include "aesd-circular-buffer.h"
+#include <linux/mutex.h>
+#include <linux/cdev.h>
 
 #ifndef AESD_CHAR_DRIVER_AESDCHAR_H_
 #define AESD_CHAR_DRIVER_AESDCHAR_H_
@@ -12,7 +15,7 @@
 
 #undef PDEBUG             /* undef it, just in case */
 #ifdef AESD_DEBUG
-#  ifdef __KERNEL__
+#    ifdef __KERNEL__
      /* This one if debugging is on, and kernel space */
 #    define PDEBUG(fmt, args...) printk( KERN_DEBUG "aesdchar: " fmt, ## args)
 #  else
@@ -25,10 +28,11 @@
 
 struct aesd_dev
 {
-    /**
-     * TODO: Add structure(s) and locks needed to complete assignment requirements
-     */
-    struct cdev cdev;     /* Char device structure      */
+    struct aesd_circular_buffer buff;
+    char *partial_write;
+    size_t partial_len;
+    struct mutex writeLock;
+    struct cdev chardev;     // Character device structure
 };
 
 

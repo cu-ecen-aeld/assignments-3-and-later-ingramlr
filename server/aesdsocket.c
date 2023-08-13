@@ -14,21 +14,41 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+//
+//
+//Settings
+//
+//
 #define PORT 9000
 #define BACKLOG 10
-#define FILENAME "/var/tmp/aesdsocketdata"
 #define FALSE 0
 #define TRUE 1
+#define TIMER 10    //Defines the wait time in seconds
+#define USE_AESD_CHAR_DEVICE 1
 
-typedef struct pthread_arg_t {
-    int new_socket_fd;
-    struct sockaddr_in client_address;
-} pthread_arg_t;
+const char* FILENAME = (USE_AESD_CHAR_DEVICE ==1) ? "/dev/aesdchar" : "/var/tmp/aesdsocketdata";
+
+//
+//
+//Global variables
+//
+//
 
 int socket_fd = -1; //Declare the global variables for socket and file fds
 int file_fd = -1;
 pthread_mutex_t fileFD; //Declare the mutex lock
 atomic_bool timeStamp = FALSE;
+
+typedef struct pthread_arg_t {      //Struct definition for multithreading
+    int new_socket_fd;
+    struct sockaddr_in client_address;      //Struct to save the client address
+} pthread_arg_t;
+
+//
+//
+//Function declarations
+//
+//
 
 // Thread routine to serve connection to client
 void *pthread_routine(void *arg);
@@ -42,8 +62,39 @@ static void tmpfileOpen();
 //File writing function
 void *fileWrite(char* textbuffer);
 
-// Signal handler to handle SIGTERM, SIGINT, and Timer signals
-void signal_handler(int sig, siginfo_t *si, void *uc);
+//
+//
+//Signal Handler function
+//
+//
+void signal_handler(int sig, siginfo_t *si, void *uc) {
+    (void)uc;   //Type cast uc to void as we dont need it
+
+    if(si->si_code == SI_TIMER){
+        timeStamp = TRUE;   //Set the global flag for the timer to true to be signal safe
+
+    } else{  //Can reasonably assume any other code is an issue
+
+        if (USE_AESD_CHAR_DEVICE == 0){
+            if (file_fd >= 0 && close(file_fd)) syslog(LOG_ERR, "%s: %m", "Close file"); //If a file is still open, close it and log it
+        }
+        if (socket_fd >= 0 && close(socket_fd)) syslog(LOG_ERR, "%s: %m", "Close server descriptor");   //Close the socket descritor and error if unable
+        if ((unlink(FILENAME)) == -1 ) syslog(LOG_ERR, "%s: %m", "Error deleting tmp file");   //Delete the tmp file we created and log if error
+    
+        if((sig == SIGINT) | (sig ==SIGTERM)){
+            syslog(LOG_DEBUG,"%s", "Caught signal, exiting"); 
+            exit(EXIT_SUCCESS);
+        }
+
+        exit(EXIT_FAILURE);
+    }
+}
+
+//
+//
+//Server functions
+//
+//
 
 int main(int argc, char *argv[]) {
     int new_socket_fd; //port
@@ -123,7 +174,10 @@ int main(int argc, char *argv[]) {
     }
 
     tmpfileOpen();
-    timerSetup();
+
+    if (USE_AESD_CHAR_DEVICE == 0) {
+        timerSetup();
+    }
 
     // Assign signal handlers to signals
     if (sigaction(SIGTERM, &sa, NULL) == -1) {
@@ -241,27 +295,6 @@ void *pthread_routine(void *arg) {
     return NULL;
 }
 
-void signal_handler(int sig, siginfo_t *si, void *uc) {
-    (void)uc;   //Type cast uc to void as we dont need it
-
-    if(si->si_code == SI_TIMER){
-        timeStamp = TRUE;   //Set the global flag for the timer to true to be signal safe
-
-    } else{  //Can reasonably assume any other code is an issue
-
-        if (file_fd >= 0 && close(file_fd)) syslog(LOG_ERR, "%s: %m", "Close file"); //If a file is still open, close it and log it
-        if (socket_fd >= 0 && close(socket_fd)) syslog(LOG_ERR, "%s: %m", "Close server descriptor");   //Close the socket descritor and error if unable
-        if ((unlink(FILENAME)) == -1 ) syslog(LOG_ERR, "%s: %m", "Error deleting tmp file");   //Delete the tmp file we created and log if error
-    
-        if((sig == SIGINT) | (sig ==SIGTERM)){
-            syslog(LOG_DEBUG,"%s", "Caught signal, exiting"); 
-            exit(EXIT_SUCCESS);
-        }
-
-        exit(EXIT_FAILURE);
-    }
-}
-
 void *fileWrite(char* textbuffer){
     if ((write(file_fd, textbuffer, strlen(textbuffer))) == -1){
         syslog(LOG_ERR, "ERROR with write");
@@ -273,7 +306,7 @@ static void timerSetup(){  //Everything needed to setup the reoccuring 10s timer
     timer_t timerId = 0;
 
     struct sigevent sev = { 0 };
-    struct itimerspec its = {   .it_interval.tv_sec  = 10,  //Specifies the time in seconds to wait resetting automatically
+    struct itimerspec its = {   .it_interval.tv_sec  = TIMER,  //Specifies the time in seconds to wait resetting automatically
                                 .it_interval.tv_nsec = 0,
                                 .it_value.tv_sec  = 1,      //If set to 0 timer is disarmed
                                 .it_value.tv_nsec = 0
