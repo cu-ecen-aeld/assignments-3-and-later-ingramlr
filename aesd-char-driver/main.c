@@ -182,7 +182,7 @@ int aesd_init_module(void)
     }
     memset(&aesd_device, 0, sizeof(struct aesd_dev));   //Set the memory region to 0 so code wont be reused
     
-    rcular_buffer_init(&aesd_device.buff);  //Declare the circular buffer we wrote last time
+    aesd_cicular_buffer_init(&aesd_device.buff);  //Declare the circular buffer we wrote last time
     aesd_device.partial_write = NULL;       //Set the region to null so we dont potentially reuse old code
     aesd_device.partial_len = 0;            //Set the length to zero
     mutex_init(&(aesd_device.writeLock));   //Declare the mutex region to lock
