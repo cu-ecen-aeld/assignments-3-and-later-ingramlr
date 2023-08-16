@@ -210,7 +210,9 @@ int main(int argc, char *argv[]) {
             strftime(textbuffer,31,"timestamp:%F %H:%M:%S\n", info);
 
             pthread_mutex_lock(&fileMutex);    //Obtain mutex lock
+            tmpfileOpen();
             fileWrite(textbuffer);      //Send the textbuffer to the file writing function
+            close(file_fd);
             pthread_mutex_unlock(&fileMutex);    //Obtain mutex lock
             syslog(LOG_DEBUG, "%s", textbuffer);
 
@@ -275,6 +277,7 @@ void *pthread_routine(void *arg) {
         totalbytes += bytes_read;
 
         pthread_mutex_lock(&fileMutex); //Lock the file for writing
+        tmpfileOpen();
 
         if (strchr(textbuffer, '\n') != NULL) {
             // check if ioctl command in stream
@@ -292,20 +295,24 @@ void *pthread_routine(void *arg) {
             }
 
             free(textbuffer);
+            close(file_fd);
             pthread_mutex_unlock(&fileMutex);
             break;
         } 
         else {
             write(file_fd, textbuffer, bytes_read);
             free(textbuffer);
+            close(file_fd);
             pthread_mutex_unlock(&fileMutex);
         }
         free(textbuffer);
+        close(file_fd);
         pthread_mutex_unlock(&fileMutex);   //Release the mutex
 
     }
 
     pthread_mutex_lock(&fileMutex); //Relock the file for reading
+    tmpfileOpen();
 
     // If we didnt get a seek command
     if(cmd == false){ 
@@ -326,6 +333,7 @@ void *pthread_routine(void *arg) {
             raise(SIGINT);
         }
     }
+    close(file_fd);
     pthread_mutex_unlock(&fileMutex);    //Unlock the mutex from the read lock we did
     free(textbuff);
     close(new_socket_fd);
