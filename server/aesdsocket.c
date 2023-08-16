@@ -9,10 +9,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/syslog.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include "aesd_ioctl.h"
 
 //
 //
@@ -25,8 +28,9 @@
 #define TRUE 1
 #define TIMER 10    //Defines the wait time in seconds
 #define USE_AESD_CHAR_DEVICE 1
+#define BUFFER 1024
 
-const char* FILENAME = (USE_AESD_CHAR_DEVICE ==1) ? "/dev/aesdchar" : "/var/tmp/aesdsocketdata";
+const char* FILENAME = (USE_AESD_CHAR_DEVICE == 1) ? "/dev/aesdchar" : "/var/tmp/aesdsocketdata";
 
 //
 //
@@ -36,7 +40,7 @@ const char* FILENAME = (USE_AESD_CHAR_DEVICE ==1) ? "/dev/aesdchar" : "/var/tmp/
 
 int socket_fd = -1; //Declare the global variables for socket and file fds
 int file_fd = -1;
-pthread_mutex_t fileFD; //Declare the mutex lock
+pthread_mutex_t fileMutex; //Declare the mutex lock
 atomic_bool timeStamp = FALSE;
 
 typedef struct pthread_arg_t {      //Struct definition for multithreading
@@ -148,7 +152,7 @@ int main(int argc, char *argv[]) {
         syslog(LOG_ERR, "ERROR with setting pthread state");
         exit(1);
     }
-    if(pthread_mutex_init(&fileFD, NULL) != 0){     //pThread mutex initialization
+    if(pthread_mutex_init(&fileMutex, NULL) != 0){     //pThread mutex initialization
         syslog(LOG_ERR, "ERROR mutex init fail");
     }
 
@@ -199,18 +203,18 @@ int main(int argc, char *argv[]) {
         if(timeStamp == TRUE){
             time_t rawtime;
             struct tm *info;
-            char *buffer = (char*)calloc(31, sizeof(char)); //Dynamically allocate the array accordingly 
+            char *textbuffer = (char*)calloc(31, sizeof(char)); //Dynamically allocate the array accordingly 
 
             time(&rawtime);
             info = localtime(&rawtime);
-            strftime(buffer,31,"timestamp:%F %H:%M:%S\n", info);
+            strftime(textbuffer,31,"timestamp:%F %H:%M:%S\n", info);
 
-            pthread_mutex_lock(&fileFD);    //Obtain mutex lock
-            fileWrite(buffer);      //Send the buffer to the file writing function
-            pthread_mutex_unlock(&fileFD);    //Obtain mutex lock
-            syslog(LOG_DEBUG, "%s", buffer);
+            pthread_mutex_lock(&fileMutex);    //Obtain mutex lock
+            fileWrite(textbuffer);      //Send the textbuffer to the file writing function
+            pthread_mutex_unlock(&fileMutex);    //Obtain mutex lock
+            syslog(LOG_DEBUG, "%s", textbuffer);
 
-            free(buffer);                   //Free the buffer created
+            free(textbuffer);                   //Free the textbuffer created
             timeStamp = FALSE;
         }
 
@@ -254,42 +258,76 @@ void *pthread_routine(void *arg) {
     inet_ntop(AF_INET, &(client_address.sin_addr), client_ip, INET_ADDRSTRLEN); //Convert the client IP character array to human readable format
     syslog(LOG_DEBUG, "Accepted connection from %s", client_ip);    //Logging who the connection was from
 
+    free(arg);  //Free the pthread argument textbuffer
 
-    free(arg);  //Free the pthread argument buffer
-
-    ssize_t bytes_read = 0;
-    char *textbuffer = (char*)calloc(1024, sizeof(char));
+    unsigned long totalbytes = 0;
+    bool cmd = false;
 
     // Read data from the client connection
-    while ((bytes_read = recv(new_socket_fd, textbuffer, 1024, 0)) > 0) {   //Buffer set to 1kB
-        if (bytes_read == -1){
-            syslog(LOG_ERR, "ERROR with recv");
+    while (1) {
+        char *textbuffer = (char*)calloc(BUFFER, sizeof(char));
+        ssize_t bytes_read = recv(new_socket_fd, textbuffer, BUFFER, 0);
+        
+        if (bytes_read < 1){
+            free(textbuffer);
+            return NULL;
+        }
+        totalbytes += bytes_read;
+
+        pthread_mutex_lock(&fileMutex); //Lock the file for writing
+
+        if (strchr(textbuffer, '\n') != NULL) {
+            // check if ioctl command in stream
+            if (strncmp(textbuffer, "AESDCHAR_IOCSEEKTO:", strnlen(textbuffer, sizeof(textbuffer))) == 0){
+                struct aesd_seekto seekto;
+                char *cmdToken = strtok(textbuffer+18, ",");
+                seekto.write_cmd = atoi(cmdToken);
+                cmdToken=strtok(NULL, ",");
+                seekto.write_cmd_offset = atoi(cmdToken);
+                ioctl(file_fd, AESDCHAR_IOCSEEKTO, (unsigned long)&seekto);
+                cmd = true;
+            } 
+            else {
+                write(file_fd, textbuffer, bytes_read);
+            }
+
+            free(textbuffer);
+            pthread_mutex_unlock(&fileMutex);
+            break;
+        } 
+        else {
+            write(file_fd, textbuffer, bytes_read);
+            free(textbuffer);
+            pthread_mutex_unlock(&fileMutex);
+        }
+        free(textbuffer);
+        pthread_mutex_unlock(&fileMutex);   //Release the mutex
+
+    }
+
+    pthread_mutex_lock(&fileMutex); //Relock the file for reading
+
+    // If we didnt get a seek command
+    if(cmd == false){ 
+        if (lseek(file_fd, (off_t) 0, SEEK_SET) == (off_t) -1){ //Check for error with (off_t) as defined by POSIX
+            syslog(LOG_ERR, "ERROR with seek");
             raise(SIGINT);
         }
-        
-        tmpfileOpen();  //If for some reason the file is not open, reopen it
-
-        pthread_mutex_lock(&fileFD);    //Obtain mutex lock
-        fileWrite(textbuffer);
-
-        // exit from reading loop if
-        if (textbuffer[bytes_read-1] == '\n') break;
     }
-    if (lseek(file_fd, (off_t) 0, SEEK_SET) == (off_t) -1){ //Check for error with (off_t) as defined by POSIX
-        syslog(LOG_ERR, "ERROR with seek");
-        raise(SIGINT);
+    char *textbuff = (char*) calloc(BUFFER, sizeof(char));
+    if (textbuff == NULL){ 
+        return NULL;
     }
-
-    int bytes_send = 0;
-    while ((bytes_read = read(file_fd, textbuffer, 1024)) > 0){    //Bytes and buffer set to 1024, 1kB
-        while ((bytes_send = send(new_socket_fd, textbuffer, bytes_read, 0)) < bytes_read){
+    ssize_t bytes_read = 0;
+    ssize_t bytes_send = 0;
+    while ((bytes_read = read(file_fd, textbuff, BUFFER)) > 0){    //Bytes and buffer set to 1024, 1kB
+        while ((bytes_send = send(new_socket_fd, textbuff, bytes_read, 0)) < bytes_read){
             syslog(LOG_ERR, "ERROR with send");
             raise(SIGINT);
         }
     }
-    pthread_mutex_unlock(&fileFD);    //Obtain mutex unlock
-
-    free(textbuffer);   //Free the allocated buffer per thread
+    pthread_mutex_unlock(&fileMutex);    //Unlock the mutex from the read lock we did
+    free(textbuff);
     close(new_socket_fd);
     syslog(LOG_DEBUG, "Closed connection from %s", client_ip);
     return NULL;
