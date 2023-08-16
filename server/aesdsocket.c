@@ -46,6 +46,7 @@ atomic_bool timeStamp = FALSE;
 typedef struct pthread_arg_t {      //Struct definition for multithreading
     int new_socket_fd;
     struct sockaddr_in client_address;      //Struct to save the client address
+    bool completed;
 } pthread_arg_t;
 
 //
@@ -64,7 +65,7 @@ static void timerSetup();
 static void tmpfileOpen();
 
 //File writing function
-void *fileWrite(char* textbuffer);
+void fileWrite(char* textbuffer);
 
 //
 //
@@ -177,8 +178,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    tmpfileOpen();
-
     if (USE_AESD_CHAR_DEVICE == 0) {
         timerSetup();
     }
@@ -210,9 +209,7 @@ int main(int argc, char *argv[]) {
             strftime(textbuffer,31,"timestamp:%F %H:%M:%S\n", info);
 
             pthread_mutex_lock(&fileMutex);    //Obtain mutex lock
-            tmpfileOpen();
             fileWrite(textbuffer);      //Send the textbuffer to the file writing function
-            close(file_fd);
             pthread_mutex_unlock(&fileMutex);    //Obtain mutex lock
             syslog(LOG_DEBUG, "%s", textbuffer);
 
@@ -227,7 +224,6 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        
         // Accept connection to client
         client_address_len = sizeof pthread_arg->client_address;
         new_socket_fd = accept(socket_fd, (struct sockaddr *)&pthread_arg->client_address, &client_address_len);
@@ -262,7 +258,9 @@ void *pthread_routine(void *arg) {
 
     free(arg);  //Free the pthread argument textbuffer
 
-    unsigned long totalbytes = 0;
+    tmpfileOpen();
+
+    //unsigned long totalbytes = 0;
     bool cmd = false;
 
     // Read data from the client connection
@@ -274,19 +272,20 @@ void *pthread_routine(void *arg) {
             free(textbuffer);
             return NULL;
         }
-        totalbytes += bytes_read;
+        //totalbytes += bytes_read;
 
         pthread_mutex_lock(&fileMutex); //Lock the file for writing
-        tmpfileOpen();
 
         if (strchr(textbuffer, '\n') != NULL) {
             // check if ioctl command in stream
             if (strncmp(textbuffer, "AESDCHAR_IOCSEEKTO:", strnlen(textbuffer, sizeof(textbuffer))) == 0){
                 struct aesd_seekto seekto;
-                char *cmdToken = strtok(textbuffer+18, ",");
+                char *cmdToken = strtok(textbuffer+19, ",");
                 seekto.write_cmd = atoi(cmdToken);
+                printf("First command set to %d\n", seekto.write_cmd);
                 cmdToken=strtok(NULL, ",");
                 seekto.write_cmd_offset = atoi(cmdToken);
+                printf("Seccond command set to %d\n", seekto.write_cmd_offset);
                 ioctl(file_fd, AESDCHAR_IOCSEEKTO, (unsigned long)&seekto);
                 cmd = true;
             } 
@@ -295,24 +294,20 @@ void *pthread_routine(void *arg) {
             }
 
             free(textbuffer);
-            close(file_fd);
             pthread_mutex_unlock(&fileMutex);
             break;
         } 
         else {
             write(file_fd, textbuffer, bytes_read);
             free(textbuffer);
-            close(file_fd);
             pthread_mutex_unlock(&fileMutex);
         }
         free(textbuffer);
-        close(file_fd);
         pthread_mutex_unlock(&fileMutex);   //Release the mutex
 
     }
 
     pthread_mutex_lock(&fileMutex); //Relock the file for reading
-    tmpfileOpen();
 
     // If we didnt get a seek command
     if(cmd == false){ 
@@ -333,7 +328,6 @@ void *pthread_routine(void *arg) {
             raise(SIGINT);
         }
     }
-    close(file_fd);
     pthread_mutex_unlock(&fileMutex);    //Unlock the mutex from the read lock we did
     free(textbuff);
     close(new_socket_fd);
@@ -341,11 +335,10 @@ void *pthread_routine(void *arg) {
     return NULL;
 }
 
-void *fileWrite(char* textbuffer){
+void fileWrite(char* textbuffer){
     if ((write(file_fd, textbuffer, strlen(textbuffer))) == -1){
         syslog(LOG_ERR, "ERROR with write");
     }
-    return(0);
 }
 
 static void timerSetup(){  //Everything needed to setup the reoccuring 10s timer
